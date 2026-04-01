@@ -11,7 +11,6 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import FolderZipIcon from "@mui/icons-material/FolderZip";
 import UploadIcon from "@mui/icons-material/Upload";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
-import CommentOutlinedIcon from "@mui/icons-material/CommentOutlined";
 import { listResults, downloadSingle, downloadZip, deleteResult, deleteResultsBatch } from "../client";
 import RoleChip from "../components/RoleChip";
 
@@ -111,7 +110,7 @@ export default function ResultsPage() {
           {[
             { label: "Total Judgments", value: results.length },
             { label: "Total Paragraphs", value: totalParas.toLocaleString() },
-            { label: "Annotated", value: results.filter(r => Object.keys(r.role_distribution).some(k => k !== "NONE")).length },
+            { label: "Annotated", value: results.filter(r => r.annotated).length },
           ].map(({ label, value }) => (
             <Paper key={label} elevation={1} sx={{ px: 2.5, py: 2, borderRadius: "12px" }}>
               <Typography variant="overline" color="text.secondary" display="block">{label}</Typography>
@@ -187,13 +186,8 @@ export default function ResultsPage() {
                 </TableCell>
                 <TableCell>File</TableCell>
                 <TableCell align="center" sx={{ width: 110 }}>Paragraphs</TableCell>
-                <TableCell sx={{ width: 400 }}>Role Distribution</TableCell>
-                <TableCell align="center" sx={{ width: 100 }}>
-                  <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5}>
-                    <CommentOutlinedIcon sx={{ fontSize: 14, color: "text.secondary" }} />
-                    <span>Comments</span>
-                  </Stack>
-                </TableCell>
+                <TableCell sx={{ width: 320 }}>Role Distribution</TableCell>
+                <TableCell sx={{ width: 200 }}>Changes</TableCell>
                 <TableCell align="right" sx={{ width: 120, pr: 2 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -227,43 +221,29 @@ export default function ResultsPage() {
                   </TableCell>
 
                   <TableCell>
-                    {r.old_role_distribution && (
-                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5, fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                        Current
-                      </Typography>
-                    )}
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                       {TOP_ROLES
                         .filter((role) => r.role_distribution[role] > 0)
+                        .slice(0, 5)
                         .map((role) => (
-                          <RoleChip key={role} role={role} count={r.role_distribution[role]} />
+                          <Tooltip key={role} title={`${role}: ${r.role_distribution[role]} paragraphs`}>
+                            <Box><RoleChip role={role} /></Box>
+                          </Tooltip>
                         ))}
                     </Stack>
-                    {r.old_role_distribution && (
-                      <>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1, mb: 0.5, fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                          Original
-                        </Typography>
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ opacity: 0.7 }}>
-                          {TOP_ROLES
-                            .filter((role) => r.old_role_distribution[role] > 0)
-                            .map((role) => (
-                              <RoleChip key={role} role={role} count={r.old_role_distribution[role]} />
-                            ))}
-                        </Stack>
-                      </>
-                    )}
                   </TableCell>
 
-                  <TableCell align="center">
-                    {r.comment_count > 0 ? (
-                      <Chip
-                        label={r.comment_count}
-                        size="small"
-                        sx={{ bgcolor: "#FFFBEB", color: "#B45309", border: "1px solid #FDE68A", fontWeight: 700 }}
-                      />
+                  <TableCell>
+                    {r.changes && r.changes.length > 0 ? (
+                      <Stack spacing={0.25}>
+                        {r.changes.map((ch, i) => (
+                          <Typography key={i} variant="caption" sx={{ color: "#64748B", lineHeight: 1.5 }}>
+                            {ch}
+                          </Typography>
+                        ))}
+                      </Stack>
                     ) : (
-                      <Typography variant="caption" color="text.secondary">—</Typography>
+                      <Typography variant="caption" color="text.disabled">—</Typography>
                     )}
                   </TableCell>
 

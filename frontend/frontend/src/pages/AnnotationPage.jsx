@@ -41,6 +41,7 @@ export default function AnnotationPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved]   = useState(false);
   const [error, setError]   = useState(null);
+  const [firstAnnotation, setFirstAnnotation] = useState(false);
 
   useEffect(() => {
     getResult(fileId)
@@ -51,8 +52,11 @@ export default function AnnotationPage() {
         data.paragraphs.forEach((p) => { orig[p.number] = p.rhetorical_role; });
         setOriginalRoles(orig);
         const open = {};
-        data.paragraphs.forEach((p, i) => { if (p.comment && !p.old) open[i] = true; });
+        data.paragraphs.forEach((p, i) => { if (p.comment && !p.old_rhetorical_role) open[i] = true; });
         setCommentOpen(open);
+        // First annotation: no paragraph has been previously annotated
+        const isFirst = !data.paragraphs.some((p) => p.old_rhetorical_role || p.comment);
+        setFirstAnnotation(isFirst);
       })
       .catch(() => setError("Could not load judgment. Upload it first."));
   }, [fileId]);
@@ -67,6 +71,13 @@ export default function AnnotationPage() {
     setDirty(true); setSaved(false);
   };
 
+  const handleCommentKeyDown = (idx, e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      setCommentOpen((prev) => ({ ...prev, [idx]: false }));
+    }
+  };
+
   const toggleComment = (idx) =>
     setCommentOpen((prev) => ({ ...prev, [idx]: !prev[idx] }));
 
@@ -77,7 +88,7 @@ export default function AnnotationPage() {
   }, new Set());
 
   const handleSave = async () => {
-    if (missingComments.size > 0) {
+    if (!firstAnnotation && missingComments.size > 0) {
       setError(`Please add a comment for the ${missingComments.size} paragraph(s) whose role was changed.`);
       return;
     }
@@ -91,7 +102,7 @@ export default function AnnotationPage() {
       const orig = {};
       paragraphs.forEach((p) => { orig[p.number] = p.rhetorical_role; });
       setOriginalRoles(orig);
-      setDirty(false); setSaved(true);
+      setDirty(false); setSaved(true); setFirstAnnotation(false);
     } catch {
       setError("Save failed.");
     } finally {
@@ -155,7 +166,7 @@ export default function AnnotationPage() {
               variant="contained"
               startIcon={<SaveIcon />}
               onClick={handleSave}
-              disabled={!dirty || saving}
+              disabled={(!dirty && !firstAnnotation) || saving}
               size="small"
             >
               {saving ? "Saving…" : "Save"}
@@ -222,8 +233,7 @@ export default function AnnotationPage() {
         const roleChanged = origRole !== undefined && para.rhetorical_role !== origRole;
         const needsComment = missingComments.has(idx);
         const hasComment   = Boolean(para.comment);
-        const hasPersistentAnnotation = !roleChanged && Boolean(para.old) && para.old !== para.rhetorical_role;
-        const showOptional = !roleChanged && !hasPersistentAnnotation && Boolean(commentOpen[idx]);
+        const showOptional = !roleChanged && Boolean(commentOpen[idx]);
 
         return (
           <Paper
@@ -306,6 +316,7 @@ export default function AnnotationPage() {
                       placeholder="Reason for change (required)…"
                       value={para.comment}
                       onChange={(e) => handleCommentChange(idx, e.target.value)}
+                      onKeyDown={(e) => handleCommentKeyDown(idx, e)}
                       error={needsComment}
                       helperText={needsComment ? "Required when changing role." : ""}
                       sx={{
@@ -319,71 +330,8 @@ export default function AnnotationPage() {
                   </>
                 )}
 
-                {/* Persisted annotation from a previous save */}
-                {hasPersistentAnnotation && (
-                  <>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                      <Chip
-                        label={para.old}
-                        size="small"
-                        sx={{
-                          bgcolor: ROLE_COLORS[para.old] ?? "#F8FAFC",
-                          border: `1px solid ${ROLE_BORDER[para.old] ?? "#E2E8F0"}`,
-                          textDecoration: "line-through",
-                          opacity: 0.75,
-                          fontSize: "0.6875rem",
-                          fontWeight: 600,
-                          "& .MuiChip-label": { px: "8px" },
-                        }}
-                      />
-                      <ArrowForwardIcon sx={{ fontSize: 13, color: "#94A3B8", flexShrink: 0 }} />
-                      <RoleChip role={para.rhetorical_role} />
-                    </Box>
-                    <Box>
-                      <Tooltip title={hasComment ? "Edit comment" : "Add comment"}>
-                        <Button
-                          size="small"
-                          startIcon={hasComment ? <CommentIcon sx={{ fontSize: "15px !important" }} /> : <CommentOutlinedIcon sx={{ fontSize: "15px !important" }} />}
-                          onClick={() => toggleComment(idx)}
-                          sx={{
-                            color: hasComment ? "primary.main" : "#94A3B8",
-                            fontSize: "0.75rem",
-                            fontWeight: 500,
-                            px: 1,
-                            py: 0.4,
-                            bgcolor: hasComment ? "primary.light" : "transparent",
-                            "&:hover": { bgcolor: "primary.light", color: "primary.main" },
-                          }}
-                        >
-                          {hasComment ? "Comment" : "Add note"}
-                        </Button>
-                      </Tooltip>
-                      {commentOpen[idx] && (
-                        <TextField
-                          fullWidth multiline minRows={2} maxRows={5} size="small"
-                          placeholder="Add a note…"
-                          value={para.comment}
-                          onChange={(e) => handleCommentChange(idx, e.target.value)}
-                          sx={{ mt: 1, "& .MuiOutlinedInput-root": { fontSize: "0.8rem", bgcolor: "#fff" } }}
-                        />
-                      )}
-                      {hasComment && !commentOpen[idx] && (
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: "block", mt: 0.5, px: 0.5, lineHeight: 1.5,
-                                overflow: "hidden", textOverflow: "ellipsis",
-                                WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
-                        >
-                          {para.comment}
-                        </Typography>
-                      )}
-                    </Box>
-                  </>
-                )}
-
-                {/* Unchanged role with no persistent annotation: optional comment toggle */}
-                {!roleChanged && !hasPersistentAnnotation && (
+                {/* Unchanged role: optional comment toggle */}
+                {!roleChanged && (
                   <Box>
                     <Tooltip title={hasComment ? "Edit comment" : "Add comment"}>
                       <Button
@@ -410,6 +358,7 @@ export default function AnnotationPage() {
                         placeholder="Add a note…"
                         value={para.comment}
                         onChange={(e) => handleCommentChange(idx, e.target.value)}
+                        onKeyDown={(e) => handleCommentKeyDown(idx, e)}
                         sx={{ mt: 1, "& .MuiOutlinedInput-root": { fontSize: "0.8rem", bgcolor: "#fff" } }}
                       />
                     )}
@@ -420,7 +369,7 @@ export default function AnnotationPage() {
                         color="text.secondary"
                         sx={{ display: "block", mt: 0.5, px: 0.5, lineHeight: 1.5,
                               overflow: "hidden", textOverflow: "ellipsis",
-                              WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
                       >
                         {para.comment}
                       </Typography>
@@ -434,25 +383,27 @@ export default function AnnotationPage() {
       })}
 
       {/* ── Floating save bar ── */}
-      {dirty && (
+      {(dirty || firstAnnotation) && (
         <Paper
           elevation={6}
           sx={{
             position: "fixed", bottom: 28, right: 28,
             px: 3, py: 1.5, borderRadius: "50px",
             display: "flex", alignItems: "center", gap: 2,
-            bgcolor: missingComments.size > 0 ? "#DC2626" : "#1a3a5c",
+            bgcolor: missingComments.size > 0 && !firstAnnotation ? "#DC2626" : "#1a3a5c",
             color: "#fff",
             backdropFilter: "blur(8px)",
-            boxShadow: missingComments.size > 0
+            boxShadow: missingComments.size > 0 && !firstAnnotation
               ? "0 8px 24px rgba(220,38,38,0.35)"
               : "0 8px 24px rgba(26,58,92,0.35)",
           }}
         >
           <Typography variant="body2" fontWeight={500}>
-            {missingComments.size > 0
+            {missingComments.size > 0 && !firstAnnotation
               ? `${missingComments.size} comment${missingComments.size > 1 ? "s" : ""} required`
-              : "Unsaved changes"}
+              : firstAnnotation && !dirty
+                ? "Ready to annotate"
+                : "Unsaved changes"}
           </Typography>
           <Button
             size="small"

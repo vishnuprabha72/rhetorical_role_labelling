@@ -12,12 +12,11 @@ const ROLE_STYLES = {
   NONE:    { bg: "#F8FAFC", color: "#475569", border: "#E2E8F0" },
 };
 
-export default function RoleChip({ role, count, size = "small" }) {
+export default function RoleChip({ role, size = "small" }) {
   const { bg, color, border } = ROLE_STYLES[role] ?? ROLE_STYLES.NONE;
-  const label = count != null ? `${role} (${count})` : role;
   return (
     <Chip
-      label={label}
+      label={role}
       size={size}
       sx={{
         bgcolor: bg,
