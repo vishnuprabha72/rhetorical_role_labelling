@@ -7,6 +7,8 @@ class Paragraph(BaseModel):
     label: str
     text: str
     rhetorical_role: str
+    old: str | None = None
+    comment: str | None = None
 
 
 class Metadata(BaseModel):
@@ -49,6 +51,7 @@ class BatchResult(BaseModel):
 class CorrectionItem(BaseModel):
     number: int
     rhetorical_role: str
+    comment: str | None = None
 
 
 class CorrectionRequest(BaseModel):

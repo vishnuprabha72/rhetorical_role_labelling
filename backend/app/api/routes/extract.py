@@ -1,13 +1,19 @@
+import asyncio
 import json
 import re
 import tempfile
 import os
 import zipfile
 import io
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
+
+# Shared thread pool for CPU-bound extraction work (pdfplumber + regex).
+# 8 workers → up to 8 PDFs extracted simultaneously.
+_EXTRACT_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="extract")
 
 from app.core.extractor import extract_judgment
 from app.schemas import (
@@ -68,47 +74,44 @@ async def extract_single(file: UploadFile = File(...)):
 
 @router.post("/batch", response_model=BatchResult)
 async def extract_batch(files: list[UploadFile] = File(...)):
-    """Upload multiple PDF judgments."""
+    """Upload multiple PDF judgments. Files are extracted in parallel."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
-    processed, failed, file_results = 0, 0, []
+    loop = asyncio.get_event_loop()
 
-    for upload in files:
+    async def _process_one(upload: UploadFile) -> BatchFileResult:
         if not upload.filename or not upload.filename.lower().endswith(".pdf"):
-            failed += 1
-            file_results.append(BatchFileResult(
-                input=upload.filename or "unknown",
-                error="Not a PDF file.",
-            ))
-            continue
+            return BatchFileResult(input=upload.filename or "unknown", error="Not a PDF file.")
 
         contents = await upload.read()
+        filename = upload.filename  # capture before thread boundary
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(contents)
-            tmp_path = tmp.name
+        def _run_in_thread() -> BatchFileResult:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(contents)
+                tmp_path = tmp.name
+            try:
+                result = extract_judgment(tmp_path)
+                result["source_file"] = filename
+                fid = _file_id(filename)
+                _save_result(fid, result)
+                return BatchFileResult(
+                    input=filename,
+                    output=f"{fid}.json",
+                    paragraphs=result["stats"]["total_paragraphs"],
+                    roles=result["stats"]["role_distribution"],
+                )
+            except Exception as e:
+                return BatchFileResult(input=filename, error=str(e))
+            finally:
+                os.unlink(tmp_path)
 
-        try:
-            result = extract_judgment(tmp_path)
-            result["source_file"] = upload.filename
-            fid = _file_id(upload.filename)
-            _save_result(fid, result)
-            processed += 1
-            file_results.append(BatchFileResult(
-                input=upload.filename,
-                output=f"{fid}.json",
-                paragraphs=result["stats"]["total_paragraphs"],
-                roles=result["stats"]["role_distribution"],
-            ))
-        except Exception as e:
-            failed += 1
-            file_results.append(BatchFileResult(
-                input=upload.filename,
-                error=str(e),
-            ))
-        finally:
-            os.unlink(tmp_path)
+        return await loop.run_in_executor(_EXTRACT_EXECUTOR, _run_in_thread)
+
+    file_results = list(await asyncio.gather(*[_process_one(f) for f in files]))
+    processed = sum(1 for r in file_results if r.error is None)
+    failed = len(file_results) - processed
 
     return BatchResult(processed=processed, failed=failed, files=file_results)
 
@@ -140,14 +143,49 @@ def get_result(file_id: str):
     return _load_result(file_id)
 
 
+@router.delete("/results/{file_id}")
+def delete_result(file_id: str):
+    """Delete a single extraction result."""
+    path = RESULTS_DIR / f"{file_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Result not found.")
+    path.unlink()
+    return {"status": "deleted", "file_id": file_id}
+
+
+@router.post("/results/delete-batch")
+def delete_results_batch(file_ids: list[str]):
+    """Delete multiple extraction results."""
+    deleted, not_found = [], []
+    for fid in file_ids:
+        path = RESULTS_DIR / f"{fid}.json"
+        if path.exists():
+            path.unlink()
+            deleted.append(fid)
+        else:
+            not_found.append(fid)
+    return {"deleted": deleted, "not_found": not_found}
+
+
 @router.post("/corrections/{file_id}")
 def save_corrections(file_id: str, body: CorrectionRequest):
-    """Save corrected rhetorical role labels for a judgment."""
+    """Save corrected rhetorical role labels and comments for a judgment."""
     result = _load_result(file_id)
-    correction_map = {c.number: c.rhetorical_role for c in body.corrections}
+    correction_map = {c.number: c for c in body.corrections}
     for para in result["paragraphs"]:
-        if para["number"] in correction_map:
-            para["rhetorical_role"] = correction_map[para["number"]]
+        corr = correction_map.get(para["number"])
+        if corr:
+            new_role = corr.rhetorical_role
+            # Preserve the auto-extracted role the very first time it is changed.
+            # Once set, original_rhetorical_role is never overwritten again.
+            if new_role != para["rhetorical_role"] and "old" not in para:
+                para["old"] = para["rhetorical_role"]
+            para["rhetorical_role"] = new_role
+            # Store comment; remove key entirely if empty so JSON stays clean
+            if corr.comment:
+                para["comment"] = corr.comment
+            else:
+                para.pop("comment", None)
     # Recompute role distribution
     from collections import Counter
     dist = Counter(p["rhetorical_role"] for p in result["paragraphs"])

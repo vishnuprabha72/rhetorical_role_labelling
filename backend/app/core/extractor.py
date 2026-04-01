@@ -100,16 +100,20 @@ def _detect_header_footer(pre, n):
 def _find_para_boundary(text):
     """
     Return char position where numbered paragraphs truly begin.
-    
+
     v2 FIX: Use a relaxed lookbehind (any whitespace before the number)
     so that "Calcutta 2. The" is matched. Confirm by checking that
     N and N+1 appear within 8000 chars (increased from 5000 to handle
     judgments with long first paragraphs).
+    v3 FIX: Also handle "N Word" format (no period after number), common
+    in some SC judgments: "1 Leave granted. 2 The respondent..."
     """
     # Relaxed: just need a space before the digit
     pats = [
         re.compile(r'(?<=\s)(?!\d{4}[. ])\d{1,3}\. (?=[A-Z][a-z])'),
         re.compile(r'(?<=\s)(?<!\()(?<!\d)\d{1,3}\) (?=[A-Z])'),
+        # "N Word" format (no period) — require title-case word of 3+ chars
+        re.compile(r'(?<=\s)(?!\d{4}\b)(\d{1,3}) (?=[A-Z][a-z]{2,})'),
     ]
 
     def _n(m, t):
@@ -213,21 +217,24 @@ def _find_all_candidate_splits(text):
     v2: Uses relaxed lookbehind — just requires whitespace (or start of string)
     before the digit.
     """
-    # Patterns: "N. Text", "N.M Text", "N.M. Text"
+    # Patterns: "N. Text", "N.M Text", "N.M. Text", "N Text"
     # Relaxed lookbehind: any whitespace before the number
     pats = [
         # Hierarchical: "9.1 Text" or "9.1. Text"
         re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4})(\d{1,3})\.(\d{1,3})\.?\s+(?=[A-Z][a-z])'),
-        # Plain: "3. Text"  — guard against years like "2010." and table rows
+        # Plain with period: "3. Text"  — guard against years like "2010." and table rows
         # like "17. DOS L-II" (all-caps abbreviations). Require title-case word
         # start (uppercase letter followed by lowercase) to match prose only.
         re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4}[. ])(\d{1,3})\.\s+(?=[A-Z][a-z])'),
+        # "N Word" format (no period after number), e.g. "1 Leave granted."
+        # Use sentence-end lookbehind to limit false positives; require 3+ lowercase chars.
+        re.compile(r'(?<=\.\s)(?!\d{4}\b)(\d{1,3})\s+(?=[A-Z][a-z]{2,})'),
     ]
-    
+
     candidates = []  # (start, end, major, minor, label)
     for pat in pats:
         for m in pat.finditer(text):
-            if pat.groups >= 2 and m.lastindex >= 2:
+            if pat.groups >= 2 and m.lastindex and m.lastindex >= 2:
                 # Hierarchical
                 major = int(m.group(1))
                 minor = int(m.group(2))
@@ -237,7 +244,7 @@ def _find_all_candidate_splits(text):
                 minor = 0
                 label = str(major)
             candidates.append((m.start(), m.end(), major, minor, label))
-    
+
     # Sort by position, deduplicate overlaps
     candidates.sort(key=lambda x: (x[0], -(x[1] - x[0])))
     unique = []
@@ -246,8 +253,20 @@ def _find_all_candidate_splits(text):
         if c[0] >= last_end:
             unique.append(c)
             last_end = c[1]
-    
-    return unique
+
+    # Filter candidates that look like list items inside a paragraph, not real
+    # paragraph starts.  A list item is introduced after ":-", ":", or a quoted
+    # header (e.g. "EXTERNAL INJURIES: 1. Contusion…").
+    _list_intro = re.compile(r'[:\-]{1,2}\s*(?:"[^"]*")?\s*(?:[A-Z][A-Z ]+)?\s*$')
+    filtered = []
+    for c in unique:
+        pre = text[max(0, c[0] - 250): c[0]]
+        # Skip only small numbers (≤20) that immediately follow a list introduction
+        if c[2] <= 20 and _list_intro.search(pre.rstrip()):
+            continue
+        filtered.append(c)
+
+    return filtered
 
 
 def _find_best_paragraph_sequence(candidates, expected_max=None):
@@ -408,20 +427,36 @@ _ROLE_RULES = [
     ]),
     ('ARG_P', [
         r'\b(learned\s+)?(senior\s+)?counsel\s+(for\s+the\s+)?(appellant|petitioner|accused)\b',
-        r'\b(appellant|petitioner)\s+(has\s+|have\s+)?(submitted|contended|argued|urged|submitted)\b',
+        r'\b(appellant|petitioner)\s+(has\s+|have\s+)?(submitted|contended|argued|urged)\b',
         r'\bon\s+behalf\s+of\s+the\s+(appellant|petitioner|accused)\b',
         r'\blearned\s+(senior\s+)?counsel.{0,40}(for\s+)?appellant\b',
         r'\bsubmission.{0,30}(on\s+behalf\s+of\s+)?(the\s+)?(appellant|petitioner)\b',
-        r'\bthe\s+appellant.{0,30}(submits?|contends?|urges?|argues?)\b',
+        r'\bthe\s+appellant.{0,30}(submits?|contends?|urges?|argues?|pleads?)\b',
+        r'\bit\s+(is|was)\s+(submitted|contended|argued|urged)\s+(by|on\s+behalf\s+of)\s+(the\s+)?(appellant|petitioner|accused)\b',
+        r'\bthe\s+(first|main|primary|sole)\s+contention\s+of\s+(the\s+)?(appellant|petitioner)\b',
+        r'\b(mr|ms|mrs|dr|shri|smt)\.?\s+\w+.{0,40}(for\s+the\s+)?(appellant|petitioner)\b',
+        r'\blearned\s+(senior\s+)?advocate.{0,40}(appellant|petitioner)\b',
+        r'\bappellant.s?\s+(counsel|advocate|contention|submission)\b',
+        r'\bpetitioner.s?\s+(counsel|advocate|contention|submission)\b',
+        r'\bit\s+is\s+(further\s+)?submitted\s+(that|by)\b',
+        r'\bthe\s+accused.{0,30}(submits?|contends?|argues?|denies?)\b',
     ]),
     ('ARG_R', [
         r'\b(learned\s+)?(senior\s+)?counsel\s+(for\s+the\s+)?respondent\b',
         r'\brespondent.{0,30}(submitted|contended|argued|urged)\b',
         r'\bon\s+behalf\s+of\s+the\s+respondent\b',
         r'\blearned\s+(senior\s+)?counsel.{0,40}(for\s+)?respondent\b',
-        r'\bthe\s+state.{0,30}(submits?|contends?|argues?)\b',
+        r'\bthe\s+state.{0,30}(submits?|contends?|argues?|urges?)\b',
         r'\blearned\s+(government\s+)?pleader\b',
         r'\blearned\s+(public\s+)?prosecutor\b',
+        r'\bit\s+(is|was)\s+(submitted|contended|argued)\s+(by|on\s+behalf\s+of)\s+(the\s+)?respondent\b',
+        r'\bthe\s+respondent.{0,50}(submits?|contends?|urges?|argues?|pleads?)\b',
+        r'\b(mr|ms|mrs|dr|shri|smt)\.?\s+\w+.{0,40}for\s+the\s+respondent\b',
+        r'\blearned\s+(senior\s+)?advocate.{0,40}respondent\b',
+        r'\brespondent.s?\s+(counsel|advocate|contention|submission)\b',
+        r'\bthe\s+(union\s+of\s+india|government).{0,30}(submits?|contends?|argues?)\b',
+        r'\bthe\s+counter.?affidavit\b',
+        r'\bthe\s+reply\s+(filed|submitted)\s+by\s+(the\s+)?respondent\b',
     ]),
     ('LAW', [
         r'\bsection\s+\d+\s+of\s+the\b',
@@ -468,6 +503,20 @@ _ROLE_RULES = [
         r'\bthe\s+deceased\b',
         r'\bthe\s+accused\b',
         r'\bthe\s+(complaint|FIR|charge.?sheet)\b',
+        # Transfer / service matter facts
+        r'\b(was|were)\s+(transferred|posted|appointed|promoted|suspended|dismissed)\b',
+        r'\bby\s+(an?\s+)?(order|notification)\s+dated\b',
+        r'\bon\s+\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\b',
+        r'\bthe\s+order\s+of\s+transfer\b',
+        r'\bthe\s+(writ\s+petition|appeal|petition)\s+(was\s+)?(filed|moved|dismissed|allowed|disposed)\b',
+        r'\bthe\s+(CAT|tribunal|high\s+court|sessions\s+court|magistrate)\b',
+        r'\b(interim|ad\s+interim)\s+(stay|order|direction|relief)\b',
+        r'\bthe\s+(police|inspector|sub.inspector)\b',
+        r'\bpostmortem\b',
+        r'\binjur(y|ies)\s+(found|noted|observed)\b',
+        r'\bwitness(es)?\s+(deposed|stated|testified)\b',
+        r'\bthe\s+(first|second|third|1st|2nd|3rd)\s+(accused|witness|complainant|informant)\b',
+        r'\bleave\s+granted\b',
     ]),
 ]
 
@@ -504,8 +553,12 @@ def _assign_role(para_text, para_number, total_paras):
         elif position >= 0.75:
             scores['HOLDING'] += 1
             scores['REASON']  += 1
-        elif position <= 0.20:
-            scores['FACT']    += 1
+        elif position >= 0.35:
+            # Middle section: analysis/reasoning is most common
+            scores['REASON']  += 1
+        elif position <= 0.30:
+            # Early section: likely facts
+            scores['FACT']    += 2
 
     best_role  = max(scores, key=scores.get)
     best_score = scores[best_role]
