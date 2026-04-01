@@ -1,14 +1,18 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { useNavigate } from "react-router-dom";
 import {
   Box, Typography, Button, LinearProgress, Paper, Alert,
-  List, ListItem, ListItemText, IconButton,
+  List, ListItem, ListItemText, IconButton, Chip,
 } from "@mui/material";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import CloseIcon from "@mui/icons-material/Close";
-import { extractSingle, extractBatch } from "../client";
+import { extractSingle, extractBatch, listResults } from "../client";
+
+function toFileId(filename) {
+  return filename.replace(/\.pdf$/i, "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
+}
 
 const CHUNK_SIZE = 10;
 
@@ -19,12 +23,19 @@ function fmt(bytes) {
 }
 
 export default function UploadPage() {
-  const [files, setFiles]       = useState([]);
-  const [progress, setProgress] = useState(0);
-  const [doneCount, setDoneCount] = useState(0);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState(null);
+  const [files, setFiles]           = useState([]);
+  const [progress, setProgress]     = useState(0);
+  const [doneCount, setDoneCount]   = useState(0);
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState(null);
+  const [existingIds, setExistingIds] = useState(new Set());
   const navigate = useNavigate();
+
+  useEffect(() => {
+    listResults()
+      .then(({ data }) => setExistingIds(new Set(data.map((r) => r.file_id))))
+      .catch(() => {});
+  }, []);
 
   const onDrop = useCallback((accepted) => {
     setFiles((prev) => [...prev, ...accepted.filter((f) => f.name.endsWith(".pdf"))]);
@@ -156,25 +167,35 @@ export default function UploadPage() {
               </Button>
             </Box>
             <List disablePadding dense>
-              {files.map((f, i) => (
-                <ListItem
-                  key={i}
-                  divider={i < files.length - 1}
-                  sx={{ px: 2, py: 1 }}
-                  secondaryAction={
-                    <IconButton edge="end" size="small" onClick={() => removeFile(i)} sx={{ color: "#94A3B8" }}>
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  }
-                >
-                  <InsertDriveFileOutlinedIcon sx={{ fontSize: 18, color: "#ef4444", mr: 1.5, flexShrink: 0 }} />
-                  <ListItemText
-                    primary={<Typography variant="body2" fontWeight={500} noWrap sx={{ maxWidth: 340 }}>{f.name}</Typography>}
-                    secondary={<Typography variant="caption">{fmt(f.size)}</Typography>}
-                    sx={{ my: 0 }}
-                  />
-                </ListItem>
-              ))}
+              {files.map((f, i) => {
+                const isDuplicate = existingIds.has(toFileId(f.name));
+                return (
+                  <ListItem
+                    key={i}
+                    divider={i < files.length - 1}
+                    sx={{ px: 2, py: 1, bgcolor: isDuplicate ? "#FFFBEB" : "transparent" }}
+                    secondaryAction={
+                      <IconButton edge="end" size="small" onClick={() => removeFile(i)} sx={{ color: "#94A3B8" }}>
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    }
+                  >
+                    <InsertDriveFileOutlinedIcon sx={{ fontSize: 18, color: isDuplicate ? "#B45309" : "#ef4444", mr: 1.5, flexShrink: 0 }} />
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Typography variant="body2" fontWeight={500} noWrap sx={{ maxWidth: 260 }}>{f.name}</Typography>
+                          {isDuplicate && (
+                            <Chip label="Already uploaded" size="small" sx={{ bgcolor: "#FDE68A", color: "#92400E", fontSize: "0.65rem", height: 18, "& .MuiChip-label": { px: "6px" } }} />
+                          )}
+                        </Box>
+                      }
+                      secondary={<Typography variant="caption" color={isDuplicate ? "#B45309" : "text.secondary"}>{fmt(f.size)}{isDuplicate ? " · Will overwrite existing" : ""}</Typography>}
+                      sx={{ my: 0 }}
+                    />
+                  </ListItem>
+                );
+              })}
             </List>
           </Paper>
         )}
@@ -190,6 +211,14 @@ export default function UploadPage() {
             </Box>
             <LinearProgress variant="determinate" value={progress} />
           </Box>
+        )}
+
+        {/* Duplicate warning */}
+        {files.some((f) => existingIds.has(toFileId(f.name))) && (
+          <Alert severity="warning" sx={{ mt: 2 }}>
+            {files.filter((f) => existingIds.has(toFileId(f.name))).map((f) => f.name).join(", ")}{" "}
+            {files.filter((f) => existingIds.has(toFileId(f.name))).length === 1 ? "is" : "are"} already uploaded. Re-uploading will overwrite the existing result.
+          </Alert>
         )}
 
         {/* Error */}

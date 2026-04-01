@@ -11,6 +11,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import FolderZipIcon from "@mui/icons-material/FolderZip";
 import UploadIcon from "@mui/icons-material/Upload";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import CommentOutlinedIcon from "@mui/icons-material/CommentOutlined";
 import { listResults, downloadSingle, downloadZip, deleteResult, deleteResultsBatch } from "../client";
 import RoleChip from "../components/RoleChip";
 
@@ -186,7 +187,13 @@ export default function ResultsPage() {
                 </TableCell>
                 <TableCell>File</TableCell>
                 <TableCell align="center" sx={{ width: 110 }}>Paragraphs</TableCell>
-                <TableCell sx={{ width: 320 }}>Role Distribution</TableCell>
+                <TableCell sx={{ width: 400 }}>Role Distribution</TableCell>
+                <TableCell align="center" sx={{ width: 100 }}>
+                  <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5}>
+                    <CommentOutlinedIcon sx={{ fontSize: 14, color: "text.secondary" }} />
+                    <span>Comments</span>
+                  </Stack>
+                </TableCell>
                 <TableCell align="right" sx={{ width: 120, pr: 2 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -220,16 +227,44 @@ export default function ResultsPage() {
                   </TableCell>
 
                   <TableCell>
+                    {r.old_role_distribution && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5, fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                        Current
+                      </Typography>
+                    )}
                     <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                       {TOP_ROLES
                         .filter((role) => r.role_distribution[role] > 0)
-                        .slice(0, 5)
                         .map((role) => (
-                          <Tooltip key={role} title={`${role}: ${r.role_distribution[role]} paragraphs`}>
-                            <Box><RoleChip role={role} /></Box>
-                          </Tooltip>
+                          <RoleChip key={role} role={role} count={r.role_distribution[role]} />
                         ))}
                     </Stack>
+                    {r.old_role_distribution && (
+                      <>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1, mb: 0.5, fontWeight: 700, fontSize: "0.6rem", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          Original
+                        </Typography>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ opacity: 0.7 }}>
+                          {TOP_ROLES
+                            .filter((role) => r.old_role_distribution[role] > 0)
+                            .map((role) => (
+                              <RoleChip key={role} role={role} count={r.old_role_distribution[role]} />
+                            ))}
+                        </Stack>
+                      </>
+                    )}
+                  </TableCell>
+
+                  <TableCell align="center">
+                    {r.comment_count > 0 ? (
+                      <Chip
+                        label={r.comment_count}
+                        size="small"
+                        sx={{ bgcolor: "#FFFBEB", color: "#B45309", border: "1px solid #FDE68A", fontWeight: 700 }}
+                      />
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    )}
                   </TableCell>
 
                   <TableCell align="right" sx={{ pr: 2 }}>

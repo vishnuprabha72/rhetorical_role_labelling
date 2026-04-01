@@ -63,3 +63,5 @@ class ResultSummary(BaseModel):
     source_file: str
     total_paragraphs: int
     role_distribution: dict[str, int]
+    comment_count: int = 0
+    old_role_distribution: dict[str, int] | None = None

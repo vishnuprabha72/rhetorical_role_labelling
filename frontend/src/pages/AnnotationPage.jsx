@@ -222,7 +222,8 @@ export default function AnnotationPage() {
         const roleChanged = origRole !== undefined && para.rhetorical_role !== origRole;
         const needsComment = missingComments.has(idx);
         const hasComment   = Boolean(para.comment);
-        const showOptional = !roleChanged && Boolean(commentOpen[idx]);
+        const hasPersistentAnnotation = !roleChanged && Boolean(para.old) && para.old !== para.rhetorical_role;
+        const showOptional = !roleChanged && !hasPersistentAnnotation && Boolean(commentOpen[idx]);
 
         return (
           <Paper
@@ -318,8 +319,71 @@ export default function AnnotationPage() {
                   </>
                 )}
 
-                {/* Unchanged role: optional comment toggle */}
-                {!roleChanged && (
+                {/* Persisted annotation from a previous save */}
+                {hasPersistentAnnotation && (
+                  <>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                      <Chip
+                        label={para.old}
+                        size="small"
+                        sx={{
+                          bgcolor: ROLE_COLORS[para.old] ?? "#F8FAFC",
+                          border: `1px solid ${ROLE_BORDER[para.old] ?? "#E2E8F0"}`,
+                          textDecoration: "line-through",
+                          opacity: 0.75,
+                          fontSize: "0.6875rem",
+                          fontWeight: 600,
+                          "& .MuiChip-label": { px: "8px" },
+                        }}
+                      />
+                      <ArrowForwardIcon sx={{ fontSize: 13, color: "#94A3B8", flexShrink: 0 }} />
+                      <RoleChip role={para.rhetorical_role} />
+                    </Box>
+                    <Box>
+                      <Tooltip title={hasComment ? "Edit comment" : "Add comment"}>
+                        <Button
+                          size="small"
+                          startIcon={hasComment ? <CommentIcon sx={{ fontSize: "15px !important" }} /> : <CommentOutlinedIcon sx={{ fontSize: "15px !important" }} />}
+                          onClick={() => toggleComment(idx)}
+                          sx={{
+                            color: hasComment ? "primary.main" : "#94A3B8",
+                            fontSize: "0.75rem",
+                            fontWeight: 500,
+                            px: 1,
+                            py: 0.4,
+                            bgcolor: hasComment ? "primary.light" : "transparent",
+                            "&:hover": { bgcolor: "primary.light", color: "primary.main" },
+                          }}
+                        >
+                          {hasComment ? "Comment" : "Add note"}
+                        </Button>
+                      </Tooltip>
+                      {commentOpen[idx] && (
+                        <TextField
+                          fullWidth multiline minRows={2} maxRows={5} size="small"
+                          placeholder="Add a note…"
+                          value={para.comment}
+                          onChange={(e) => handleCommentChange(idx, e.target.value)}
+                          sx={{ mt: 1, "& .MuiOutlinedInput-root": { fontSize: "0.8rem", bgcolor: "#fff" } }}
+                        />
+                      )}
+                      {hasComment && !commentOpen[idx] && (
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: "block", mt: 0.5, px: 0.5, lineHeight: 1.5,
+                                overflow: "hidden", textOverflow: "ellipsis",
+                                WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                        >
+                          {para.comment}
+                        </Typography>
+                      )}
+                    </Box>
+                  </>
+                )}
+
+                {/* Unchanged role with no persistent annotation: optional comment toggle */}
+                {!roleChanged && !hasPersistentAnnotation && (
                   <Box>
                     <Tooltip title={hasComment ? "Edit comment" : "Add comment"}>
                       <Button
@@ -356,7 +420,7 @@ export default function AnnotationPage() {
                         color="text.secondary"
                         sx={{ display: "block", mt: 0.5, px: 0.5, lineHeight: 1.5,
                               overflow: "hidden", textOverflow: "ellipsis",
-                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                              WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
                       >
                         {para.comment}
                       </Typography>

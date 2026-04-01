@@ -121,16 +121,29 @@ async def extract_batch(files: list[UploadFile] = File(...)):
 @router.get("/results", response_model=list[ResultSummary])
 def list_results():
     """List all previously extracted judgments."""
+    from collections import Counter
     summaries = []
     for path in sorted(RESULTS_DIR.glob("*.json")):
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+            paragraphs = data.get("paragraphs", [])
+            comment_count = sum(1 for p in paragraphs if p.get("comment"))
+            has_annotations = any(p.get("old") for p in paragraphs)
+            old_role_distribution = None
+            if has_annotations:
+                old_dist = Counter(
+                    p.get("old") or p["rhetorical_role"]
+                    for p in paragraphs
+                )
+                old_role_distribution = dict(old_dist)
             summaries.append(ResultSummary(
                 file_id=path.stem,
                 source_file=data.get("source_file", path.stem),
                 total_paragraphs=data["stats"]["total_paragraphs"],
                 role_distribution=data["stats"]["role_distribution"],
+                comment_count=comment_count,
+                old_role_distribution=old_role_distribution,
             ))
         except Exception:
             continue
