@@ -110,10 +110,11 @@ def _find_para_boundary(text):
     """
     # Relaxed: just need a space before the digit
     pats = [
-        re.compile(r'(?<=\s)(?!\d{4}[. ])\d{1,3}\. (?=[A-Z][a-z])'),
+        # "N. Text" — allow single-letter words at start (e.g. "A perusal", "I consider")
+        re.compile(r'(?<=\s)(?!\d{4}[. ])\d{1,3}\. (?=[A-Z](?:[a-z]|\s[a-z]))'),
         re.compile(r'(?<=\s)(?<!\()(?<!\d)\d{1,3}\) (?=[A-Z])'),
-        # "N Word" format (no period) — require title-case word of 3+ chars
-        re.compile(r'(?<=\s)(?!\d{4}\b)(\d{1,3}) (?=[A-Z][a-z]{2,})'),
+        # "N Word" format (no period) — also allow single-letter first word
+        re.compile(r'(?<=\s)(?!\d{4}\b)(\d{1,3}) (?=[A-Z](?:[a-z]{2,}|\s[a-z]{2,}))'),
     ]
 
     def _n(m, t):
@@ -221,14 +222,22 @@ def _find_all_candidate_splits(text):
     # Relaxed lookbehind: any whitespace before the number
     pats = [
         # Hierarchical: "9.1 Text" or "9.1. Text"
-        re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4})(\d{1,3})\.(\d{1,3})\.?\s+(?=[A-Z][a-z])'),
-        # Plain with period: "3. Text"  — guard against years like "2010." and table rows
-        # like "17. DOS L-II" (all-caps abbreviations). Require title-case word
-        # start (uppercase letter followed by lowercase) to match prose only.
-        re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4}[. ])(\d{1,3})\.\s+(?=[A-Z][a-z])'),
-        # "N Word" format (no period after number), e.g. "1 Leave granted."
-        # Use sentence-end lookbehind to limit false positives; require 3+ lowercase chars.
-        re.compile(r'(?<=\.\s)(?!\d{4}\b)(\d{1,3})\s+(?=[A-Z][a-z]{2,})'),
+        # Lookahead allows single-letter words: "A perusal", "I consider"
+        re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4})(\d{1,3})\.(\d{1,3})\.?\s+(?=[A-Z](?:[a-z]|\s[a-z]))'),
+        # Plain with period: "3. Text"
+        # Guard against years (2010.) and all-caps abbreviations (DOS L-II).
+        # Allow single-letter first word: "7. A perusal", "5. I submit".
+        re.compile(r'(?:(?<=\s)|(?<=^))(?!\d{4}[. ])(\d{1,3})\.\s+(?=[A-Z](?:[a-z]|\s[a-z]))'),
+        # "N Text" format (no period after number), e.g. "1 Leave granted."
+        # Lookbehind handles sentence endings including closing quotes/parens:
+        #   plain period:  "sentence. 7 Leave"
+        #   period+quote:  'sentence." 7 Leave'  or  "sentence.' 7 Leave"
+        #   period+paren:  "sentence.) 7 Leave"
+        # All alternatives are exactly 2 chars wide (required by Python re).
+        re.compile(
+            r'(?:(?<=[.!?]\s)|(?<=["\')\u201d\u2019\u2018\u201c]\s))'
+            r'(?!\d{4}\b)(\d{1,3})\s+(?=[A-Z](?:[a-z]{2,}|\s[a-z]{2,}))'
+        ),
     ]
 
     candidates = []  # (start, end, major, minor, label)

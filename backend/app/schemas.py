@@ -7,7 +7,7 @@ class Paragraph(BaseModel):
     label: str
     text: str
     rhetorical_role: str
-    old: str | None = None
+    old_rhetorical_role: str | None = None
     comment: str | None = None
 
 
@@ -32,6 +32,7 @@ class ExtractionResult(BaseModel):
     metadata: Metadata
     paragraphs: list[Paragraph]
     stats: Stats
+    annotated: bool = False
 
 
 class BatchFileResult(BaseModel):
@@ -49,6 +50,7 @@ class BatchResult(BaseModel):
 
 
 class CorrectionItem(BaseModel):
+    index: int
     number: int
     rhetorical_role: str
     comment: str | None = None
@@ -58,10 +60,20 @@ class CorrectionRequest(BaseModel):
     corrections: list[CorrectionItem]
 
 
+class ChangeSummary(BaseModel):
+    index: int
+    paragraph: int
+    old_role: str
+    new_role: str
+    comment: str | None = None
+
+
 class ResultSummary(BaseModel):
     file_id: str
     source_file: str
     total_paragraphs: int
     role_distribution: dict[str, int]
+    old_role_distribution: dict[str, int] = {}
+    changes: list[ChangeSummary] = []
     comment_count: int = 0
-    old_role_distribution: dict[str, int] | None = None
+    annotated: bool = False
