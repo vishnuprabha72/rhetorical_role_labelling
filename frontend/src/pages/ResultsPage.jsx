@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Box, Typography, Paper, Button, Chip, CircularProgress,
   Alert, Table, TableHead, TableBody, TableRow, TableCell,
-  TableContainer, IconButton, Tooltip, Stack, Checkbox,
+  TableContainer, IconButton, Tooltip, Stack, Checkbox, Link,
 } from "@mui/material";
 import EditIcon from "@mui/icons-material/Edit";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -15,6 +15,33 @@ import { listResults, downloadSingle, downloadZip, deleteResult, deleteResultsBa
 import RoleChip from "../components/RoleChip";
 
 const TOP_ROLES = ["FACT", "REASON", "ARG_P", "ARG_R", "LAW", "ISSUE", "HOLDING", "ORDER"];
+
+const ROLE_STYLES = {
+  FACT:    { bg: "#EFF6FF", color: "#1D4ED8", border: "#BFDBFE" },
+  ISSUE:   { bg: "#FFF1F2", color: "#BE123C", border: "#FECDD3" },
+  ARG_P:   { bg: "#FAF5FF", color: "#7E22CE", border: "#E9D5FF" },
+  ARG_R:   { bg: "#F5F3FF", color: "#5B21B6", border: "#DDD6FE" },
+  LAW:     { bg: "#F0FDF4", color: "#15803D", border: "#BBF7D0" },
+  REASON:  { bg: "#FFFBEB", color: "#B45309", border: "#FDE68A" },
+  HOLDING: { bg: "#FFF7ED", color: "#C2410C", border: "#FED7AA" },
+  ORDER:   { bg: "#ECFDF5", color: "#065F46", border: "#A7F3D0" },
+  NONE:    { bg: "#F8FAFC", color: "#475569", border: "#E2E8F0" },
+};
+
+function RoleChipWithCount({ role, count }) {
+  const { bg, color, border } = ROLE_STYLES[role] ?? ROLE_STYLES.NONE;
+  return (
+    <Chip
+      label={`${role} (${count})`}
+      size="small"
+      sx={{
+        bgcolor: bg, color, border: `1px solid ${border}`,
+        fontWeight: 600, fontSize: "0.625rem",
+        "& .MuiChip-label": { px: "6px" },
+      }}
+    />
+  );
+}
 
 export default function ResultsPage() {
   const [results, setResults] = useState([]);
@@ -107,11 +134,18 @@ export default function ResultsPage() {
       {/* ── Stat cards ── */}
       {results.length > 0 && (
         <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 2, mb: 3 }}>
-          {[
-            { label: "Total Judgments", value: results.length },
-            { label: "Total Paragraphs", value: totalParas.toLocaleString() },
-            { label: "Annotated", value: results.filter(r => r.annotated).length },
-          ].map(({ label, value }) => (
+          {(() => {
+            const annotatedParas = results.filter(r => r.annotated).reduce((sum, r) => sum + (r.total_paragraphs || 0), 0);
+            const totalCorrections = results.reduce((sum, r) => sum + (r.changes ? r.changes.length : 0), 0);
+            const accuracy = annotatedParas > 0 ? (((annotatedParas - totalCorrections) / annotatedParas) * 100).toFixed(1) : "—";
+            return [
+              { label: "Total Judgments", value: results.length },
+              { label: "Total Paragraphs", value: totalParas.toLocaleString() },
+              { label: "Annotated", value: annotatedParas.toLocaleString() },
+              { label: "Corrections", value: totalCorrections.toLocaleString() },
+              { label: "Accuracy", value: accuracy === "—" ? accuracy : `${accuracy}%` },
+            ];
+          })().map(({ label, value }) => (
             <Paper key={label} elevation={1} sx={{ px: 2.5, py: 2, borderRadius: "12px" }}>
               <Typography variant="overline" color="text.secondary" display="block">{label}</Typography>
               <Typography variant="h5" sx={{ mt: 0.25, fontWeight: 700 }}>{value}</Typography>
@@ -186,8 +220,9 @@ export default function ResultsPage() {
                 </TableCell>
                 <TableCell>File</TableCell>
                 <TableCell align="center" sx={{ width: 110 }}>Paragraphs</TableCell>
-                <TableCell sx={{ width: 320 }}>Role Distribution</TableCell>
+                <TableCell sx={{ width: 380 }}>Role Distribution</TableCell>
                 <TableCell sx={{ width: 200 }}>Changes</TableCell>
+                <TableCell sx={{ width: 200 }}>Comments</TableCell>
                 <TableCell align="right" sx={{ width: 120, pr: 2 }}>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -203,13 +238,28 @@ export default function ResultsPage() {
                     <Checkbox checked={selected.has(r.file_id)} onChange={() => toggleOne(r.file_id)} size="small" />
                   </TableCell>
 
+                  {/* Task 4: Remove file_id below file name */}
                   <TableCell>
                     <Typography variant="body2" fontWeight={600} sx={{ mb: 0.2 }}>
                       {r.source_file}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {r.file_id}
-                    </Typography>
+                    {r.annotated && (
+                      <Chip
+                        label="Annotated"
+                        size="small"
+                        sx={{
+                          mt: 0.5,
+                          display: "block",
+                          width: "fit-content",
+                          height: 20,
+                          fontSize: "0.7rem",
+                          fontWeight: 600,
+                          bgcolor: "#D1FAE5",
+                          color: "#065F46",
+                          border: "1px solid #6EE7B7",
+                        }}
+                      />
+                    )}
                   </TableCell>
 
                   <TableCell align="center">
@@ -220,25 +270,83 @@ export default function ResultsPage() {
                     />
                   </TableCell>
 
+                  {/* Task 6: Show Old and New role distributions */}
                   <TableCell>
-                    <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                      {TOP_ROLES
-                        .filter((role) => r.role_distribution[role] > 0)
-                        .slice(0, 5)
-                        .map((role) => (
-                          <Tooltip key={role} title={`${role}: ${r.role_distribution[role]} paragraphs`}>
-                            <Box><RoleChip role={role} /></Box>
-                          </Tooltip>
-                        ))}
-                    </Stack>
+                    {r.annotated && r.old_role_distribution && Object.keys(r.old_role_distribution).length > 0 &&
+                     r.changes && r.changes.length > 0 ? (
+                      <Stack spacing={1}>
+                        <Box>
+                          <Typography variant="caption" fontWeight={600} color="text.secondary" sx={{ mb: 0.5, display: "block" }}>
+                            Old
+                          </Typography>
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                            {TOP_ROLES
+                              .filter((role) => r.old_role_distribution[role] > 0)
+                              .map((role) => (
+                                <Chip
+                                  key={role}
+                                  label={`${role} (${r.old_role_distribution[role]})`}
+                                  size="small"
+                                  sx={{ opacity: 0.65, textDecoration: "line-through", fontSize: "0.625rem", fontWeight: 600,
+                                        bgcolor: "#F8FAFC", border: "1px solid #E2E8F0", "& .MuiChip-label": { px: "6px" } }}
+                                />
+                              ))}
+                          </Stack>
+                        </Box>
+                        <Box>
+                          <Typography variant="caption" fontWeight={600} color="text.secondary" sx={{ mb: 0.5, display: "block" }}>
+                            New
+                          </Typography>
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                            {TOP_ROLES
+                              .filter((role) => r.role_distribution[role] > 0)
+                              .map((role) => (
+                                <RoleChipWithCount key={role} role={role} count={r.role_distribution[role]} />
+                              ))}
+                          </Stack>
+                        </Box>
+                      </Stack>
+                    ) : (
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                        {TOP_ROLES
+                          .filter((role) => r.role_distribution[role] > 0)
+                          .map((role) => (
+                            <RoleChipWithCount key={role} role={role} count={r.role_distribution[role]} />
+                          ))}
+                      </Stack>
+                    )}
                   </TableCell>
 
+                  {/* Task 2, 5, 8: Changes as clickable links with old→new */}
                   <TableCell>
                     {r.changes && r.changes.length > 0 ? (
                       <Stack spacing={0.25}>
                         {r.changes.map((ch, i) => (
+                          <Link
+                            key={i}
+                            component="button"
+                            variant="caption"
+                            underline="hover"
+                            onClick={() => navigate(`/annotate/${r.file_id}?idx=${ch.index}`)}
+                            sx={{ color: "#1D4ED8", lineHeight: 1.5, textAlign: "left", cursor: "pointer" }}
+                          >
+                            ¶{ch.paragraph}: {ch.old_role} → {ch.new_role}
+                          </Link>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Typography variant="caption" color="text.disabled">—</Typography>
+                    )}
+                  </TableCell>
+
+                  {/* Task 5: Comments section shows actual comments */}
+                  <TableCell>
+                    {r.changes && r.changes.some(ch => ch.comment) ? (
+                      <Stack spacing={0.25}>
+                        {r.changes.filter(ch => ch.comment).map((ch, i) => (
                           <Typography key={i} variant="caption" sx={{ color: "#64748B", lineHeight: 1.5 }}>
-                            {ch}
+                            <Typography component="span" variant="caption" fontWeight={600}>¶{ch.paragraph}:</Typography>{" "}
+                            {ch.comment}
                           </Typography>
                         ))}
                       </Stack>

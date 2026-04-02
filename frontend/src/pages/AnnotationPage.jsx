@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useState, useRef } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box, Typography, Paper, Select, MenuItem, FormControl,
   Button, Chip, CircularProgress, Alert,
   Accordion, AccordionSummary, AccordionDetails, Tooltip,
-  TextField, IconButton, Stack, Divider,
+  TextField, IconButton, Stack, Divider, Checkbox as MuiCheckbox,
+  FormControlLabel,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SaveIcon from "@mui/icons-material/Save";
@@ -13,6 +14,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import CommentIcon from "@mui/icons-material/Comment";
 import CommentOutlinedIcon from "@mui/icons-material/CommentOutlined";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { getResult, saveCorrections, downloadSingle } from "../client";
 import RoleChip from "../components/RoleChip";
 
@@ -33,6 +35,7 @@ const ROLE_BORDER = {
 export default function AnnotationPage() {
   const { fileId } = useParams();
   const navigate   = useNavigate();
+  const [searchParams] = useSearchParams();
   const [result, setResult]         = useState(null);
   const [paragraphs, setParagraphs] = useState([]);
   const [originalRoles, setOriginalRoles] = useState({});
@@ -42,6 +45,8 @@ export default function AnnotationPage() {
   const [saved, setSaved]   = useState(false);
   const [error, setError]   = useState(null);
   const [firstAnnotation, setFirstAnnotation] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const paraRefs = useRef({});
 
   useEffect(() => {
     getResult(fileId)
@@ -49,28 +54,43 @@ export default function AnnotationPage() {
         setResult(data);
         setParagraphs(data.paragraphs.map((p) => ({ ...p, comment: p.comment ?? "" })));
         const orig = {};
-        data.paragraphs.forEach((p) => { orig[p.number] = p.rhetorical_role; });
+        data.paragraphs.forEach((p, i) => { orig[i] = p.rhetorical_role; });
         setOriginalRoles(orig);
         const open = {};
         data.paragraphs.forEach((p, i) => { if (p.comment && !p.old_rhetorical_role) open[i] = true; });
         setCommentOpen(open);
-        // First annotation: no paragraph has been previously annotated
-        const isFirst = !data.paragraphs.some((p) => p.old_rhetorical_role || p.comment);
-        setFirstAnnotation(isFirst);
+        setFirstAnnotation(!data.annotated);
       })
       .catch(() => setError("Could not load judgment. Upload it first."));
   }, [fileId]);
 
+  // Task 8: Scroll to paragraph from ?idx= query param
+  useEffect(() => {
+    const targetIdx = searchParams.get("idx");
+    if (targetIdx != null && paragraphs.length > 0) {
+      const idx = parseInt(targetIdx, 10);
+      const ref = paraRefs.current[idx];
+      if (ref) {
+        setTimeout(() => {
+          ref.scrollIntoView({ behavior: "smooth", block: "center" });
+          ref.style.boxShadow = "0 0 0 3px #3B82F6";
+          setTimeout(() => { ref.style.boxShadow = ""; }, 2000);
+        }, 300);
+      }
+    }
+  }, [paragraphs, searchParams]);
+
   const handleRoleChange = (idx, newRole) => {
     setParagraphs((prev) => { const c = [...prev]; c[idx] = { ...c[idx], rhetorical_role: newRole }; return c; });
-    setDirty(true); setSaved(false);
+    setDirty(true); setSaved(false); setConfirmed(false);
   };
 
   const handleCommentChange = (idx, text) => {
     setParagraphs((prev) => { const c = [...prev]; c[idx] = { ...c[idx], comment: text }; return c; });
-    setDirty(true); setSaved(false);
+    setDirty(true); setSaved(false); setConfirmed(false);
   };
 
+  // Task 1: Close textarea on Enter
   const handleCommentKeyDown = (idx, e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -82,32 +102,44 @@ export default function AnnotationPage() {
     setCommentOpen((prev) => ({ ...prev, [idx]: !prev[idx] }));
 
   const missingComments = paragraphs.reduce((acc, p, idx) => {
-    const changed = originalRoles[p.number] !== undefined && p.rhetorical_role !== originalRoles[p.number];
+    const changed = originalRoles[idx] !== undefined && p.rhetorical_role !== originalRoles[idx];
     if (changed && !p.comment.trim()) acc.add(idx);
     return acc;
   }, new Set());
 
+  const [saveError, setSaveError] = useState(null);
+
   const handleSave = async () => {
-    if (!firstAnnotation && missingComments.size > 0) {
-      setError(`Please add a comment for the ${missingComments.size} paragraph(s) whose role was changed.`);
+    if (missingComments.size > 0) {
+      const msg = `Please add a comment for the ${missingComments.size} paragraph(s) whose role was changed.`;
+      setError(msg);
+      setSaveError(msg);
       return;
     }
-    setSaving(true); setError(null);
+    setSaving(true); setError(null); setSaveError(null);
     try {
-      await saveCorrections(fileId, paragraphs.map((p) => ({
+      await saveCorrections(fileId, paragraphs.map((p, i) => ({
+        index: i,
         number: p.number,
         rhetorical_role: p.rhetorical_role,
         comment: p.comment || null,
       })));
       const orig = {};
-      paragraphs.forEach((p) => { orig[p.number] = p.rhetorical_role; });
+      paragraphs.forEach((p, i) => { orig[i] = p.rhetorical_role; });
       setOriginalRoles(orig);
       setDirty(false); setSaved(true); setFirstAnnotation(false);
     } catch {
       setError("Save failed.");
+      setSaveError("Save failed.");
     } finally {
       setSaving(false);
     }
+  };
+
+  // Task 3 & 7: Done button saves and navigates to results
+  const handleDone = async () => {
+    await handleSave();
+    navigate("/results");
   };
 
   const handleDownload = async () => {
@@ -135,10 +167,13 @@ export default function AnnotationPage() {
     return acc;
   }, {});
 
+  const canComplete = confirmed && (!dirty || missingComments.size === 0);
+
   return (
-    <Box sx={{ maxWidth: 1060, mx: "auto", mt: 4, px: { xs: 2, sm: 3 }, pb: 10 }}>
+    <Box sx={{ maxWidth: 1060, mx: "auto", mt: 4, px: { xs: 2, sm: 3 }, pb: 14 }}>
 
       {/* ── Header card ── */}
+      {/* Task 7: Removed Save button from header */}
       <Paper elevation={1} sx={{ px: 3, py: 2.5, mb: 3, borderRadius: "14px" }}>
         <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -161,15 +196,6 @@ export default function AnnotationPage() {
           <Stack direction="row" spacing={1} sx={{ mt: 1, flexShrink: 0 }}>
             <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleDownload} size="small">
               Download
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={handleSave}
-              disabled={(!dirty && !firstAnnotation) || saving}
-              size="small"
-            >
-              {saving ? "Saving…" : "Save"}
             </Button>
           </Stack>
         </Box>
@@ -229,15 +255,18 @@ export default function AnnotationPage() {
 
       {/* ── Paragraph cards ── */}
       {paragraphs.map((para, idx) => {
-        const origRole    = originalRoles[para.number];
+        const origRole    = originalRoles[idx];
         const roleChanged = origRole !== undefined && para.rhetorical_role !== origRole;
         const needsComment = missingComments.has(idx);
         const hasComment   = Boolean(para.comment);
         const showOptional = !roleChanged && Boolean(commentOpen[idx]);
+        const persistedOldRole = para.old_rhetorical_role;
+        const hasSavedChange = !roleChanged && persistedOldRole && persistedOldRole !== para.rhetorical_role;
 
         return (
           <Paper
             key={para.number}
+            ref={(el) => { paraRefs.current[idx] = el; }}
             elevation={0}
             sx={{
               mb: 1.5,
@@ -247,7 +276,7 @@ export default function AnnotationPage() {
               borderLeft: "4px solid",
               borderLeftColor: needsComment ? "#DC2626" : ROLE_BORDER[para.rhetorical_role] ?? "#E2E8F0",
               bgcolor: ROLE_COLORS[para.rhetorical_role] ?? "#F8FAFC",
-              transition: "border-color 0.15s, background-color 0.15s",
+              transition: "border-color 0.15s, background-color 0.15s, box-shadow 0.3s",
             }}
           >
             <Box sx={{ display: "flex", gap: 2, p: 2 }}>
@@ -290,7 +319,28 @@ export default function AnnotationPage() {
                   </Select>
                 </FormControl>
 
-                {/* Role changed: indicator + required comment */}
+                {/* Saved change: show old → new from backend */}
+                {hasSavedChange && (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                    <Chip
+                      label={persistedOldRole}
+                      size="small"
+                      sx={{
+                        bgcolor: ROLE_COLORS[persistedOldRole] ?? "#F8FAFC",
+                        border: `1px solid ${ROLE_BORDER[persistedOldRole] ?? "#E2E8F0"}`,
+                        textDecoration: "line-through",
+                        opacity: 0.65,
+                        fontSize: "0.6875rem",
+                        fontWeight: 600,
+                        "& .MuiChip-label": { px: "8px" },
+                      }}
+                    />
+                    <ArrowForwardIcon sx={{ fontSize: 13, color: "#94A3B8", flexShrink: 0 }} />
+                    <RoleChip role={para.rhetorical_role} />
+                  </Box>
+                )}
+
+                {/* Role changed: indicator + required comment (always visible) */}
                 {roleChanged && (
                   <>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
@@ -316,7 +366,6 @@ export default function AnnotationPage() {
                       placeholder="Reason for change (required)…"
                       value={para.comment}
                       onChange={(e) => handleCommentChange(idx, e.target.value)}
-                      onKeyDown={(e) => handleCommentKeyDown(idx, e)}
                       error={needsComment}
                       helperText={needsComment ? "Required when changing role." : ""}
                       sx={{
@@ -330,7 +379,7 @@ export default function AnnotationPage() {
                   </>
                 )}
 
-                {/* Unchanged role: optional comment toggle */}
+                {/* Task 1: Unchanged role - optional comment toggle, closes on Enter */}
                 {!roleChanged && (
                   <Box>
                     <Tooltip title={hasComment ? "Edit comment" : "Add comment"}>
@@ -367,9 +416,9 @@ export default function AnnotationPage() {
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{ display: "block", mt: 0.5, px: 0.5, lineHeight: 1.5,
+                        sx={{ display: "-webkit-box", mt: 0.5, px: 0.5, lineHeight: 1.5,
                               overflow: "hidden", textOverflow: "ellipsis",
-                              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                              WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
                       >
                         {para.comment}
                       </Typography>
@@ -382,45 +431,102 @@ export default function AnnotationPage() {
         );
       })}
 
-      {/* ── Floating save bar ── */}
-      {(dirty || firstAnnotation) && (
+      {/* ── Floating save bar for unsaved changes ── */}
+      {dirty && (
         <Paper
           elevation={6}
           sx={{
             position: "fixed", bottom: 28, right: 28,
-            px: 3, py: 1.5, borderRadius: "50px",
-            display: "flex", alignItems: "center", gap: 2,
-            bgcolor: missingComments.size > 0 && !firstAnnotation ? "#DC2626" : "#1a3a5c",
+            px: 3, py: 1.5, borderRadius: "16px",
+            display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1,
+            bgcolor: missingComments.size > 0 || saveError ? "#DC2626" : "#1a3a5c",
             color: "#fff",
             backdropFilter: "blur(8px)",
-            boxShadow: missingComments.size > 0 && !firstAnnotation
+            boxShadow: missingComments.size > 0 || saveError
               ? "0 8px 24px rgba(220,38,38,0.35)"
               : "0 8px 24px rgba(26,58,92,0.35)",
+            zIndex: 1000,
+            maxWidth: 360,
           }}
         >
-          <Typography variant="body2" fontWeight={500}>
-            {missingComments.size > 0 && !firstAnnotation
-              ? `${missingComments.size} comment${missingComments.size > 1 ? "s" : ""} required`
-              : firstAnnotation && !dirty
-                ? "Ready to annotate"
+          {saveError && (
+            <Typography variant="caption" sx={{ opacity: 0.95, lineHeight: 1.4 }}>
+              {saveError}
+            </Typography>
+          )}
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+            <Typography variant="body2" fontWeight={500}>
+              {missingComments.size > 0
+                ? `${missingComments.size} comment${missingComments.size > 1 ? "s" : ""} required`
                 : "Unsaved changes"}
-          </Typography>
-          <Button
-            size="small"
-            onClick={handleSave}
-            disabled={saving}
-            sx={{
-              color: "#fff",
-              bgcolor: "rgba(255,255,255,0.15)",
-              border: "1px solid rgba(255,255,255,0.3)",
-              borderRadius: "50px",
-              px: 2,
-              "&:hover": { bgcolor: "rgba(255,255,255,0.25)" },
-            }}
-            startIcon={<SaveIcon sx={{ fontSize: "16px !important" }} />}
-          >
-            Save
-          </Button>
+            </Typography>
+            <Button
+              size="small"
+              onClick={handleSave}
+              disabled={saving}
+              sx={{
+                color: "#fff",
+                bgcolor: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.3)",
+                borderRadius: "50px",
+                px: 2,
+                "&:hover": { bgcolor: "rgba(255,255,255,0.25)" },
+              }}
+              startIcon={<SaveIcon sx={{ fontSize: "16px !important" }} />}
+            >
+              Save
+            </Button>
+          </Box>
+        </Paper>
+      )}
+
+      {/* ── Agreement checkbox + Complete/Done button ── */}
+      {paragraphs.length > 0 && (
+        <Paper
+          elevation={1}
+          sx={{
+            mt: 4, p: 3, borderRadius: "14px",
+            border: "1px solid",
+            borderColor: confirmed ? "#6EE7B7" : "#E2E8F0",
+            bgcolor: confirmed ? "#F0FDF4" : "#FAFAFA",
+            transition: "all 0.2s",
+          }}
+        >
+          <FormControlLabel
+            control={
+              <MuiCheckbox
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                sx={{ "&.Mui-checked": { color: "#065F46" } }}
+              />
+            }
+            label={
+              <Typography variant="body2" sx={{ color: "#1E293B" }}>
+                I have annotated / no corrections required for all paragraphs in <strong>{result.source_file}</strong>
+              </Typography>
+            }
+          />
+
+          {confirmed && (
+            <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
+              <Button
+                variant="contained"
+                startIcon={<CheckCircleIcon />}
+                onClick={handleDone}
+                disabled={saving || (!firstAnnotation && missingComments.size > 0)}
+                sx={{
+                  bgcolor: "#065F46",
+                  "&:hover": { bgcolor: "#064E3B" },
+                  borderRadius: "50px",
+                  px: 4,
+                  py: 1,
+                  fontWeight: 600,
+                }}
+              >
+                {saving ? "Saving…" : "Complete"}
+              </Button>
+            </Box>
+          )}
         </Paper>
       )}
     </Box>

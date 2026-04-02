@@ -24,6 +24,7 @@ export default function UploadPage() {
   const [doneCount, setDoneCount] = useState(0);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
   const [existingFiles, setExistingFiles] = useState([]);
   const navigate = useNavigate();
 
@@ -38,10 +39,11 @@ export default function UploadPage() {
     const duplicates = pdfs.filter((f) => existingFiles.includes(f.name));
     const newFiles = pdfs.filter((f) => !existingFiles.includes(f.name));
     if (duplicates.length > 0) {
-      setError(`Already uploaded: ${duplicates.map((f) => f.name).join(", ")}`);
+      setDuplicateWarning(`${duplicates.map((f) => f.name).join(", ")} ${duplicates.length === 1 ? "is" : "are"} already uploaded in results.`);
     } else {
-      setError(null);
+      setDuplicateWarning(null);
     }
+    setError(null);
     if (newFiles.length > 0) setFiles((prev) => [...prev, ...newFiles]);
   }, [existingFiles]);
 
@@ -203,6 +205,13 @@ export default function UploadPage() {
             </Box>
             <LinearProgress variant="determinate" value={progress} />
           </Box>
+        )}
+
+        {/* Duplicate warning */}
+        {duplicateWarning && (
+          <Alert severity="warning" sx={{ mt: 2 }} onClose={() => setDuplicateWarning(null)}>
+            {duplicateWarning}
+          </Alert>
         )}
 
         {/* Error */}
